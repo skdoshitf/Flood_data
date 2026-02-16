@@ -11,6 +11,8 @@ from src.models.orchestrator_models import OrchestratorRequest, OrchestratorResu
 from src.models.agent_models import AddressVerificationResult, FloodZoneResult
 from src.orchestrator.process_def import ProcessDefinition, ProcessStep
 from src.orchestrator.nl_parser import NLQueryParser
+from src.utils.cache import CacheManager
+from src.utils.logger import setup_logger
 
 
 class FloodZoneOrchestrator:
@@ -19,7 +21,9 @@ class FloodZoneOrchestrator:
     def __init__(self,
                  reportall_key: str,
                  use_wfs: bool = False,
-                 output_dir: Optional[str] = None):
+                 output_dir: Optional[str] = None,
+                 cache_manager: Optional[CacheManager] = None,
+                 cache_enabled: bool = True):
         """
         Initialize orchestrator.
         
@@ -27,13 +31,46 @@ class FloodZoneOrchestrator:
             reportall_key: ReportAll API client key
             use_wfs: If True, use WFS endpoint for FEMA; otherwise use REST
             output_dir: Directory for output files (default: current directory)
+            cache_manager: Optional CacheManager instance
+            cache_enabled: Whether caching is enabled
         """
+        # Setup cache
+        if cache_manager:
+            self.cache = cache_manager
+        elif cache_enabled:
+            self.cache = CacheManager()
+        else:
+            self.cache = None
+        
+        # Initialize agents with caching
+        from src.integrations.reportall_client import ReportAllClient
+        from src.integrations.fema_client import FEMAClient
+        
+        reportall_client = ReportAllClient(
+            reportall_key,
+            cache_manager=self.cache,
+            cache_enabled=cache_enabled
+        )
+        fema_client = FEMAClient(
+            use_wfs=use_wfs,
+            cache_manager=self.cache,
+            cache_enabled=cache_enabled
+        )
+        
+        # Create agents (they'll use the clients internally)
         self.agent1 = AddressVerificationAgent(reportall_key)
+        self.agent1.reportall_client = reportall_client
+        
         self.agent2 = FloodZoneAgent(use_wfs=use_wfs)
+        self.agent2.fema_client = fema_client
+        
         self.nl_parser = NLQueryParser()
         self.process = ProcessDefinition()
         self.output_dir = Path(output_dir) if output_dir else Path(".")
         self.reportall_key = reportall_key
+        
+        # Setup logger
+        self.logger = setup_logger("orchestrator")
         
         # Execution state
         self.logs: list[str] = []

@@ -39,16 +39,20 @@ REPORTALL_API_VERSION = "9"
 class ReportAllClient:
     """Client for interacting with ReportAll API."""
     
-    def __init__(self, client_key: str):
+    def __init__(self, client_key: str, cache_manager=None, cache_enabled: bool = True):
         """
         Initialize ReportAll client.
         
         Args:
             client_key: ReportAll client key or token
+            cache_manager: Optional CacheManager instance
+            cache_enabled: Whether caching is enabled
         """
         self.client_key = client_key
         self.base_url = REPORTALL_BASE
         self.api_version = REPORTALL_API_VERSION
+        self.cache_enabled = cache_enabled
+        self.cache = cache_manager
     
     def query_by_address(self,
                         q: Optional[str] = None,
@@ -69,6 +73,14 @@ class ReportAllClient:
             ValueError: If required parameters are missing
             requests.HTTPError: If API request fails
         """
+        # Check cache
+        if self.cache_enabled and self.cache:
+            import json
+            cache_key = f"reportall.address:{json.dumps({'q': q, 'address': address, 'region': region}, sort_keys=True)}"
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+        
         params = {
             "v": self.api_version,
             "client": self.client_key,
@@ -85,7 +97,15 @@ class ReportAllClient:
         
         response = session.get(self.base_url, params=params, timeout=60, verify=False)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Cache result
+        if self.cache_enabled and self.cache:
+            import json
+            cache_key = f"reportall.address:{json.dumps({'q': q, 'address': address, 'region': region}, sort_keys=True)}"
+            self.cache.set(cache_key, result, ttl=3600)  # 1 hour TTL
+        
+        return result
     
     def query_by_parcel_id(self, parcel_id: str, region: str) -> Dict:
         """
@@ -101,6 +121,13 @@ class ReportAllClient:
         Raises:
             requests.HTTPError: If API request fails
         """
+        # Check cache
+        if self.cache_enabled and self.cache:
+            cache_key = f"reportall.parcel_id:{parcel_id}:{region}"
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+        
         params = {
             "v": self.api_version,
             "parcel_id": parcel_id,
@@ -111,7 +138,14 @@ class ReportAllClient:
         
         response = session.get(self.base_url, params=params, timeout=60, verify=False)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Cache result
+        if self.cache_enabled and self.cache:
+            cache_key = f"reportall.parcel_id:{parcel_id}:{region}"
+            self.cache.set(cache_key, result, ttl=3600)  # 1 hour TTL
+        
+        return result
     
     def query_nearby_parcels(self,
                             lon: float,

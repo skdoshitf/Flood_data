@@ -48,18 +48,22 @@ def _pd_concat(parts: list[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
 class FEMAClient:
     """Client for interacting with FEMA NFHL APIs."""
     
-    def __init__(self, use_wfs: bool = False):
+    def __init__(self, use_wfs: bool = False, cache_manager=None, cache_enabled: bool = True):
         """
         Initialize FEMA client.
         
         Args:
             use_wfs: If True, use WFS endpoint; otherwise use REST endpoint
+            cache_manager: Optional CacheManager instance
+            cache_enabled: Whether caching is enabled
         """
         self.use_wfs = use_wfs
         self.wfs_url = NFHL_WFS
         self.rest_layer28_url = NFHL_REST_LAYER28
         self.rest_layer5_url = NFHL_REST_LAYER5
         self.typename = NFHL_TYPENAME
+        self.cache_enabled = cache_enabled
+        self.cache = cache_manager
     
     def fetch_flood_zones(self, bbox_4326: Tuple[float, float, float, float]) -> gpd.GeoDataFrame:
         """
@@ -71,10 +75,24 @@ class FEMAClient:
         Returns:
             GeoDataFrame of flood zone features
         """
+        # Check cache
+        if self.cache_enabled and self.cache:
+            cache_key = f"fema.flood_zones:{self.use_wfs}:{bbox_4326}"
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+        
         if self.use_wfs:
-            return self._fetch_wfs(bbox_4326)
+            result = self._fetch_wfs(bbox_4326)
         else:
-            return self._fetch_rest(bbox_4326)
+            result = self._fetch_rest(bbox_4326)
+        
+        # Cache result (GeoDataFrame can be pickled)
+        if self.cache_enabled and self.cache:
+            cache_key = f"fema.flood_zones:{self.use_wfs}:{bbox_4326}"
+            self.cache.set(cache_key, result, ttl=7200)  # 2 hours TTL for FEMA data
+        
+        return result
     
     def _fetch_wfs(self, bbox_4326: Tuple[float, float, float, float]) -> gpd.GeoDataFrame:
         """Fetch flood zones using WFS endpoint."""
